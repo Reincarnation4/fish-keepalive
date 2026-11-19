@@ -1,0 +1,64 @@
+name: 双沙箱保活
+
+# 每 5 分钟各踩一次两个 CloudStudio 沙箱，防止同时休眠导致互踩死结。
+# GitHub Actions 在美国，是独立于两个沙箱的"清醒第三方"。
+# A(bj8=本沙箱) 与 B(bj2=对方沙箱) 拆成两个独立 job：一个失败不影响另一个。
+on:
+  schedule:
+    - cron: '*/5 * * * *'
+  workflow_dispatch:
+
+jobs:
+  ping-a:
+    name: 踩沙箱 A (bj8)
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: 请求 A 保活链接
+        env:
+          URL: ${{ secrets.URL_A }}
+        run: |
+          echo "===== A · $(date -u '+%F %T UTC') ====="
+          jar=/tmp/cookie_a.txt
+          ok=0
+          for i in 1 2 3; do
+            code=$(curl -skL --max-time 35 -c "$jar" -b "$jar" \
+                     -o /dev/null -w "%{http_code}" "${URL}&ping=$(date +%s%N)")
+            echo "第 $i 次 → 最终HTTP $code"
+            case "$code" in
+              200|403) ok=1; break ;;
+            esac
+            sleep 5
+          done
+          if [ "$ok" = 1 ]; then
+            echo "✅ 沙箱A 已独立访问成功（200=踩通 / 403=请求已到达境外拦截）"
+          else
+            echo "⚠️ 沙箱A 三次均未送达"
+          fi
+
+  ping-b:
+    name: 踩沙箱 B (bj2)
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+    steps:
+      - name: 请求 B 保活链接
+        env:
+          URL: ${{ secrets.URL_B }}
+        run: |
+          echo "===== B · $(date -u '+%F %T UTC') ====="
+          jar=/tmp/cookie_b.txt
+          ok=0
+          for i in 1 2 3; do
+            code=$(curl -skL --max-time 35 -c "$jar" -b "$jar" \
+                     -o /dev/null -w "%{http_code}" "${URL}&ping=$(date +%s%N)")
+            echo "第 $i 次 → 最终HTTP $code"
+            case "$code" in
+              200|403) ok=1; break ;;
+            esac
+            sleep 5
+          done
+          if [ "$ok" = 1 ]; then
+            echo "✅ 沙箱B 已独立访问成功（200=踩通 / 403=请求已到达境外拦截）"
+          else
+            echo "⚠️ 沙箱B 三次均未送达"
+          fi
