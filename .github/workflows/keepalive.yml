@@ -1,17 +1,16 @@
-name: 双沙箱保活
+name: 大肥鱼保活
 
 # 根治 GitHub 免费定时被延迟(实际4~6h一次)导致沙箱休眠掉线的问题：
-# job 一旦被触发，就在 job 内部每 2 分钟踩一次两个沙箱，持续约 5.5 小时；
-# 结束前通过 API 自我 dispatch 拉起下一轮，形成不间断接力链。
+# job 一旦被触发，就在 job 内部每 2 分钟踩一次本沙箱的四个页面端口，
+# 持续约 5.5 小时；结束前通过 PAT 自我 dispatch 拉起下一轮，形成不间断接力链。
 # 链一旦建立就不再依赖不准的 schedule；schedule 只作每天几次的断链兜底。
+# 单链保护：任何时刻只有一个 run，防止兜底定时与接力叠加出并行链。
 # 仓库为 public，Actions 分钟数免费，长驻循环不产生费用。
 on:
   schedule:
     - cron: '17 0,6,12,18 * * *'   # 每天4次兜底重启链，错开整点
   workflow_dispatch:
 
-# 单链保护：同一时刻只允许一个 run，新的启动会自动取消旧的，
-# 防止「兜底定时 + 自我接力」叠加出多条并行链越滚越多。
 concurrency:
   group: fish-keepalive
   cancel-in-progress: true
@@ -21,33 +20,44 @@ permissions:
 
 jobs:
   keepalive:
-    name: 长驻保活(踩A+踩B)+自我接力
+    name: 长驻保活(8000/8001/8002/8003)+自我接力
     runs-on: ubuntu-latest
     timeout-minutes: 355
     steps:
-      - name: 循环踩两个沙箱并自我接力
+      - name: 循环踩四个页面端口并自我接力
         env:
-          URL_A: ${{ secrets.URL_A }}
-          URL_B: ${{ secrets.URL_B }}
+          URL_8000: ${{ secrets.URL_A }}
+          URL_8001: ${{ secrets.URL_8001 }}
+          URL_8002: ${{ secrets.URL_8002 }}
+          URL_8003: ${{ secrets.URL_8003 }}
           GH_TOKEN: ${{ secrets.KEEP_PAT }}
           REPO: ${{ github.repository }}
         run: |
           echo "===== 保活链启动 $(date -u '+%F %T UTC') ====="
-          ja=/tmp/ca.txt; jb=/tmp/cb.txt
-          rm -f "$ja" "$jb"
-          oka=0; okb=0
+          OK8000=0; OK8001=0; OK8002=0; OK8003=0
           for i in $(seq 1 165); do
-            ca=$(curl -skL --max-time 30 -c "$ja" -b "$ja" \
-                   -o /dev/null -w "%{http_code}" "${URL_A}&ping=$(date +%s%N)")
-            cb=$(curl -skL --max-time 30 -c "$jb" -b "$jb" \
-                   -o /dev/null -w "%{http_code}" "${URL_B}&ping=$(date +%s%N)")
-            ts=$(date -u '+%F %T')
-            echo "[$ts] 第 $i 轮 → A=$ca B=$cb"
-            [ "$ca" = "200" ] && oka=$((oka+1))
-            [ "$cb" = "200" ] && okb=$((okb+1))
+            line="[$(date -u '+%F %T')] 第 $i 轮"
+            for p in 8000 8001 8002 8003; do
+              case "$p" in
+                8000) url="$URL_8000"; jar=/tmp/c8000.txt;;
+                8001) url="$URL_8001"; jar=/tmp/c8001.txt;;
+                8002) url="$URL_8002"; jar=/tmp/c8002.txt;;
+                8003) url="$URL_8003"; jar=/tmp/c8003.txt;;
+              esac
+              code=$(curl -skL --max-time 30 -c "$jar" -b "$jar" \
+                       -o /dev/null -w "%{http_code}" "${url}&ping=$(date +%s%N)")
+              case "$p" in
+                8000) [ "$code" = "200" ] && OK8000=$((OK8000+1));;
+                8001) [ "$code" = "200" ] && OK8001=$((OK8001+1));;
+                8002) [ "$code" = "200" ] && OK8002=$((OK8002+1));;
+                8003) [ "$code" = "200" ] && OK8003=$((OK8003+1));;
+              esac
+              line="$line  ${p}=${code}"
+            done
+            echo "$line"
             sleep 120
           done
-          echo "===== 一轮结束 $(date -u '+%F %T UTC') A成功=$oka/165 B成功=$okb/165 ====="
+          echo "===== 一轮结束 $(date -u '+%F %T UTC') 累计成功: 8000=$OK8000 8001=$OK8001 8002=$OK8002 8003=$OK8003 /165 ====="
           curl -s -X POST \
             -H "Authorization: Bearer $GH_TOKEN" \
             -H "Accept: application/vnd.github+json" \
