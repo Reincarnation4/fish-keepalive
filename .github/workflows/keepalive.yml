@@ -23,7 +23,7 @@ jobs:
         env:
           URL_A: ${{ secrets.URL_A }}
           URL_B: ${{ secrets.URL_B }}
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ secrets.KEEP_PAT }}
           REPO: ${{ github.repository }}
         run: |
           echo "===== 保活链启动 $(date -u '+%F %T UTC') ====="
