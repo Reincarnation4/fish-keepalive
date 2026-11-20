@@ -10,6 +10,12 @@ on:
     - cron: '17 0,6,12,18 * * *'   # 每天4次兜底重启链，错开整点
   workflow_dispatch:
 
+# 单链保护：同一时刻只允许一个 run，新的启动会自动取消旧的，
+# 防止「兜底定时 + 自我接力」叠加出多条并行链越滚越多。
+concurrency:
+  group: fish-keepalive
+  cancel-in-progress: true
+
 permissions:
   actions: write
 
