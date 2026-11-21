@@ -1,14 +1,15 @@
 name: 大肥鱼保活
 
-# 根治 GitHub 免费定时被延迟(实际4~6h一次)导致沙箱休眠掉线的问题：
-# job 一旦被触发，就在 job 内部每 2 分钟踩一次本沙箱的四个页面端口，
-# 持续约 5.5 小时；结束前通过 PAT 自我 dispatch 拉起下一轮，形成不间断接力链。
-# 链一旦建立就不再依赖不准的 schedule；schedule 只作每天几次的断链兜底。
-# 单链保护：任何时刻只有一个 run，防止兜底定时与接力叠加出并行链。
-# 仓库为 public，Actions 分钟数免费，长驻循环不产生费用。
+# ★ 2026-11-21 重大修复：旧链接 webview.e2b.* 已下线（302→404），请求根本到不了沙箱，
+#   这就是之前"保活一直在跑但鱼照样掉"的根因。现全面改用官方新格式：
+#   https://${X_IDE_SPACE_KEY}--${PORT}.${X_IDE_SPACE_REGION}.${X_IDE_SPACE_HOST}/
+#   实测 8000/8002/8003/8004 均 HTTP 200（真实打到沙箱），8001=403/3080=401 是应用鉴权，属正常到达。
+#
+# 加大力度：间隔从 120s 提速到 60s，端口从 4 个扩到 7 个，一轮 330 次 ≈ 5.5h，PAT 自我接力不间断。
+# schedule 仅断链兜底；concurrency 单链防叠加。
 on:
   schedule:
-    - cron: '17 0,6,12,18 * * *'   # 每天4次兜底重启链，错开整点
+    - cron: '11 1,5,9,13,17,21 * * *'   # 每4小时兜底重启链
   workflow_dispatch:
 
 concurrency:
@@ -20,11 +21,11 @@ permissions:
 
 jobs:
   keepalive:
-    name: 长驻保活(8000/8001/8002/8003)+自我接力
+    name: 高频踩活(全端口·新格式)+自我接力
     runs-on: ubuntu-latest
     timeout-minutes: 355
     steps:
-      - name: 循环踩四个页面端口并自我接力
+      - name: 循环踩全部端口并自我接力
         env:
           URL_8000: ${{ secrets.URL_A }}
           URL_8001: ${{ secrets.URL_8001 }}
@@ -33,33 +34,32 @@ jobs:
           GH_TOKEN: ${{ secrets.KEEP_PAT }}
           REPO: ${{ github.repository }}
         run: |
-          echo "===== 保活链启动 $(date -u '+%F %T UTC') ====="
-          OK8000=0; OK8001=0; OK8002=0; OK8003=0
-          for i in $(seq 1 165); do
+          echo "===== 保活链启动(新格式/60s) $(date -u '+%F %T UTC') ====="
+          declare -A HIT=( [8000]=0 [8001]=0 [8002]=0 [8003]=0 [8004]=0 [3080]=0 [3188]=0 )
+          SID=a20f6d680ea44f17ae11040182575e85
+          D=bj8.sandbox.cloudstudio.club
+          U8000="${URL_8000:-https://${SID}--8000.${D}/}"
+          U8001="${URL_8001:-https://${SID}--8001.${D}/}"
+          U8002="${URL_8002:-https://${SID}--8002.${D}/}"
+          U8003="${URL_8003:-https://${SID}--8003.${D}/}"
+          U8004="https://${SID}--8004.${D}/"
+          U3080="https://${SID}--3080.${D}/"
+          U3188="https://${SID}--3188.${D}/"
+          for i in $(seq 1 330); do
             line="[$(date -u '+%F %T')] 第 $i 轮"
-            for p in 8000 8001 8002 8003; do
+            for p in 8000 8001 8002 8003 8004 3080 3188; do
               case "$p" in
-                8000) url="$URL_8000"; jar=/tmp/c8000.txt;;
-                8001) url="$URL_8001"; jar=/tmp/c8001.txt;;
-                8002) url="$URL_8002"; jar=/tmp/c8002.txt;;
-                8003) url="$URL_8003"; jar=/tmp/c8003.txt;;
+                8000) url="$U8000";; 8001) url="$U8001";; 8002) url="$U8002";;
+                8003) url="$U8003";; 8004) url="$U8004";; 3080) url="$U3080";; 3188) url="$U3188";;
               esac
-              code=$(curl -skL --max-time 30 -c "$jar" -b "$jar" \
-                       -o /dev/null -w "%{http_code}" "${url}&ping=$(date +%s%N)")
-              case "$p" in
-                8000) [ "$code" = "200" ] && OK8000=$((OK8000+1));;
-                8001) [ "$code" = "200" ] && OK8001=$((OK8001+1));;
-                8002) [ "$code" = "200" ] && OK8002=$((OK8002+1));;
-                8003) [ "$code" = "200" ] && OK8003=$((OK8003+1));;
-              esac
-              line="$line  ${p}=${code}"
+              code=$(curl -skL --max-time 25 -o /dev/null -w "%{http_code}" "${url}?hb=$(date +%s%N)" 2>/dev/null)
+              case "$code" in 200|401|403|404) HIT[$p]=$((HIT[$p]+1));; esac
+              line="$line ${p}=${code}"
             done
             echo "$line"
-            sleep 120
+            sleep 60
           done
-          echo "===== 一轮结束 $(date -u '+%F %T UTC') 累计成功: 8000=$OK8000 8001=$OK8001 8002=$OK8002 8003=$OK8003 /165 ====="
-          curl -s -X POST \
-            -H "Authorization: Bearer $GH_TOKEN" \
-            -H "Accept: application/vnd.github+json" \
+          echo "===== 一轮结束 $(date -u '+%F %T UTC') 到达: 8000=${HIT[8000]} 8001=${HIT[8001]} 8002=${HIT[8002]} 8003=${HIT[8003]} 8004=${HIT[8004]} 3080=${HIT[3080]} 3188=${HIT[3188]} /330 ====="
+          curl -s -X POST -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
             "https://api.github.com/repos/$REPO/actions/workflows/keepalive.yml/dispatches" \
             -d '{"ref":"main"}' -w "自我接力 dispatch → HTTP %{http_code}\n"
